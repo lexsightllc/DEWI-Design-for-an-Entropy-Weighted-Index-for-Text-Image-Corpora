@@ -126,6 +126,8 @@ def config(output: Optional[str], overwrite: bool, preset: str):
 @click.option('--embeddings', type=click.Path(exists=True), help='Numpy file with embeddings')
 @click.option('--batch-size', type=int, help='Override batch size for processing')
 @click.option('--device', type=str, help='Device to use (cpu, cuda, etc.)')
+@click.option('--delta', type=float, help='Override scoring delta')
+@click.option('--mode', type=click.Choice(['standard', 'conditional']), help='Scoring mode')
 def process(
     config_path: str,
     output_dir: str,
@@ -133,7 +135,9 @@ def process(
     images: Optional[str],
     embeddings: Optional[str],
     batch_size: Optional[int],
-    device: Optional[str]
+    device: Optional[str],
+    delta: Optional[float],
+    mode: Optional[str]
 ) -> None:
     """Process documents and compute DEWI signals.
     
@@ -168,6 +172,11 @@ def process(
             cfg.image.batch_size = batch_size
             if hasattr(cfg, 'cross_modal') and cfg.cross_modal:
                 cfg.cross_modal.batch_size = batch_size
+
+        if delta is not None:
+            cfg.scoring.delta = float(delta)
+        if mode is not None:
+            cfg.scoring.mode = mode
         
         # Set device if provided
         if device:
@@ -185,7 +194,11 @@ def process(
         # Process documents
         click.echo(f"Processing {len(documents)} documents...")
         processed_docs = pipeline.compute_signals(documents)
-        processed_docs = pipeline.compute_dewi_scores(processed_docs)
+        processed_docs = pipeline.compute_dewi_scores(
+            processed_docs,
+            delta=cfg.scoring.delta,
+            mode=cfg.scoring.mode,
+        )
         
         # Save results
         _save_results(processed_docs, output_path)

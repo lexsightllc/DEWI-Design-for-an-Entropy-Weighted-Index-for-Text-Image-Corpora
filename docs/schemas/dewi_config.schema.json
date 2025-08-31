@@ -1,0 +1,276 @@
+{
+  "$defs": {
+    "CrossModalConfig": {
+      "properties": {
+        "model": {
+          "default": "openai/clip-vit-base-patch32",
+          "title": "Model",
+          "type": "string"
+        },
+        "batch_size": {
+          "default": 128,
+          "title": "Batch Size",
+          "type": "integer"
+        }
+      },
+      "title": "CrossModalConfig",
+      "type": "object"
+    },
+    "EvalConfig": {
+      "properties": {
+        "recall_k": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Recall K",
+          "type": "array"
+        },
+        "ndcg_k": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Ndcg K",
+          "type": "array"
+        },
+        "mrr": {
+          "default": true,
+          "title": "Mrr",
+          "type": "boolean"
+        },
+        "dewi_bins": {
+          "items": {
+            "type": "number"
+          },
+          "title": "Dewi Bins",
+          "type": "array"
+        }
+      },
+      "title": "EvalConfig",
+      "type": "object"
+    },
+    "ImageConfig": {
+      "properties": {
+        "model": {
+          "default": "facebook/vit-mae-base",
+          "title": "Model",
+          "type": "string"
+        },
+        "patch_size": {
+          "default": 16,
+          "title": "Patch Size",
+          "type": "integer"
+        },
+        "batch_size": {
+          "default": 64,
+          "title": "Batch Size",
+          "type": "integer"
+        }
+      },
+      "title": "ImageConfig",
+      "type": "object"
+    },
+    "IndexConfig": {
+      "properties": {
+        "ann": {
+          "default": "hnsw",
+          "title": "Ann",
+          "type": "string"
+        },
+        "metric": {
+          "default": "cosine",
+          "title": "Metric",
+          "type": "string"
+        },
+        "ef_construction": {
+          "default": 200,
+          "title": "Ef Construction",
+          "type": "integer"
+        },
+        "M": {
+          "default": 32,
+          "title": "M",
+          "type": "integer"
+        },
+        "ef_query": {
+          "default": 200,
+          "title": "Ef Query",
+          "type": "integer"
+        },
+        "rerank_eta": {
+          "default": 0.25,
+          "title": "Rerank Eta",
+          "type": "number"
+        },
+        "entropy_pref": {
+          "default": 0.0,
+          "title": "Entropy Pref",
+          "type": "number"
+        }
+      },
+      "title": "IndexConfig",
+      "type": "object"
+    },
+    "NoiseConfig": {
+      "properties": {
+        "blur_threshold": {
+          "default": 0.25,
+          "title": "Blur Threshold",
+          "type": "number"
+        },
+        "ocr_min_coverage": {
+          "default": 0.6,
+          "title": "Ocr Min Coverage",
+          "type": "number"
+        },
+        "nsfw_filter": {
+          "default": "lite",
+          "title": "Nsfw Filter",
+          "type": "string"
+        }
+      },
+      "title": "NoiseConfig",
+      "type": "object"
+    },
+    "RedundancyConfig": {
+      "properties": {
+        "text_sim": {
+          "default": "minhash",
+          "title": "Text Sim",
+          "type": "string"
+        },
+        "image_sim": {
+          "default": "phash+vit",
+          "title": "Image Sim",
+          "type": "string"
+        },
+        "cross_modal_density": {
+          "default": true,
+          "title": "Cross Modal Density",
+          "type": "boolean"
+        }
+      },
+      "title": "RedundancyConfig",
+      "type": "object"
+    },
+    "ScoringConfig": {
+      "properties": {
+        "weights": {
+          "$ref": "#/$defs/ScoringWeights"
+        },
+        "delta": {
+          "default": 3.0,
+          "title": "Delta",
+          "type": "number"
+        },
+        "mode": {
+          "default": "standard",
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "title": "ScoringConfig",
+      "type": "object"
+    },
+    "ScoringWeights": {
+      "properties": {
+        "alpha_t": {
+          "default": 1.0,
+          "title": "Alpha T",
+          "type": "number"
+        },
+        "alpha_i": {
+          "default": 1.0,
+          "title": "Alpha I",
+          "type": "number"
+        },
+        "alpha_m": {
+          "default": 1.0,
+          "title": "Alpha M",
+          "type": "number"
+        },
+        "alpha_r": {
+          "default": 1.0,
+          "title": "Alpha R",
+          "type": "number"
+        },
+        "alpha_n": {
+          "default": 1.0,
+          "title": "Alpha N",
+          "type": "number"
+        }
+      },
+      "title": "ScoringWeights",
+      "type": "object"
+    },
+    "TextConfig": {
+      "properties": {
+        "model": {
+          "default": "distilroberta-base",
+          "title": "Model",
+          "type": "string"
+        },
+        "quantiles": {
+          "items": {
+            "type": "number"
+          },
+          "title": "Quantiles",
+          "type": "array"
+        },
+        "batch_size": {
+          "default": 64,
+          "title": "Batch Size",
+          "type": "integer"
+        }
+      },
+      "title": "TextConfig",
+      "type": "object"
+    },
+    "TrainingSamplingConfig": {
+      "properties": {
+        "tau": {
+          "default": 1.0,
+          "title": "Tau",
+          "type": "number"
+        },
+        "submodular_pick": {
+          "default": false,
+          "title": "Submodular Pick",
+          "type": "boolean"
+        }
+      },
+      "title": "TrainingSamplingConfig",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "text": {
+      "$ref": "#/$defs/TextConfig"
+    },
+    "image": {
+      "$ref": "#/$defs/ImageConfig"
+    },
+    "cross_modal": {
+      "$ref": "#/$defs/CrossModalConfig"
+    },
+    "redundancy": {
+      "$ref": "#/$defs/RedundancyConfig"
+    },
+    "noise": {
+      "$ref": "#/$defs/NoiseConfig"
+    },
+    "scoring": {
+      "$ref": "#/$defs/ScoringConfig"
+    },
+    "index": {
+      "$ref": "#/$defs/IndexConfig"
+    },
+    "training_sampling": {
+      "$ref": "#/$defs/TrainingSamplingConfig"
+    },
+    "eval": {
+      "$ref": "#/$defs/EvalConfig"
+    }
+  },
+  "title": "DewiConfig",
+  "type": "object"
+}

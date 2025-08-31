@@ -87,7 +87,9 @@ def test_process_command(tmp_dir):
         str(output_dir),
         "--texts", str(tmp_dir / "texts"),
         "--images", str(tmp_dir / "images"),
-        "--embeddings", str(tmp_dir / "embeddings")
+        "--embeddings", str(tmp_dir / "embeddings"),
+        "--delta", "2.5",
+        "--mode", "conditional",
     ])
     assert result.exit_code == 0
     

@@ -99,16 +99,21 @@ class DewiIndex(BaseIndex):
         return self._backend._payloads.get(doc_id)
 
     def get_embedding(self, doc_id: str) -> Optional[np.ndarray]:
+        emb_store = getattr(self._backend, "_embeddings", None)
+        if emb_store is None:
+            return None
         try:
             idx = self._backend._doc_ids.index(doc_id)
         except ValueError:
             return None
-        emb_store = getattr(self._backend, "_embeddings", None)
-        if emb_store is None:
+        try:
+            if isinstance(emb_store, list):
+                return emb_store[idx]
+            if isinstance(emb_store, np.ndarray):
+                return emb_store[idx]
+        except Exception:
             return None
-        if isinstance(emb_store, list):
-            return emb_store[idx]
-        return emb_store[idx]
+        return None
 
     def get_metadata(self, doc_id: str) -> Optional[Dict[str, Any]]:
         return self._meta.get(doc_id)
