@@ -268,6 +268,16 @@ For additional help, please [open an issue](https://github.com/yourusername/dewi
 - Error messages
 - Environment details
 
+# Requirement → Implementation Map
+- Text entropy (HT): src/dewi/signals/text_entropy.py (Language-model surprisal + robust stats)
+- Image entropy (HI): src/dewi/signals/image_entropy.py (MAE reconstruction MSE)
+- Cross-modal redundancy (R): src/dewi/signals/redundancy.py (CLIP cosine)
+- Noise (N): src/dewi/signals/noise.py (language check, OCR, NSFW; optional deps)
+- Weights/config: src/dewi/types.py (Weights), src/dewi/config.py (DewiConfig)
+- Scoring: src/dewi/scorer.py (uses Weights consistently)
+- Indexing & search: src/dewi/index.py (façade) → src/dewi/backends/* (Exact/HNSW/FAISS)
+- CLI & I/O: src/dewi/cli.py (create_document, load/save results)
+
 ## License
 
 MIT
