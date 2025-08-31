@@ -4,9 +4,11 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict, Any, cast
+from typing import List, Optional, Tuple, Dict, Any, cast, Union
 
 import click
+
+from dewi.pipelines import Document
 
 from dewi import __version__
 
@@ -389,6 +391,5 @@ def _save_results(documents, output_dir):
             import traceback
             traceback.print_exc()
         raise
-
 if __name__ == '__main__':
     cli()

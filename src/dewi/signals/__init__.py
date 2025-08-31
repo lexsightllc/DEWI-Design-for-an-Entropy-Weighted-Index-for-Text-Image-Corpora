@@ -11,7 +11,7 @@ import numpy as np
 # Import the main signal classes from their respective modules
 from .text_entropy import TextEntropyEstimator
 from .image_entropy import ImageEntropyEstimator
-from .cross_modal import CrossModalDependency, CrossModalEstimator
+from .cross_modal import CrossModalDependency  # Only import available class
 from .redundancy import RedundancyEstimator
 from .noise import NoiseEstimator
 
@@ -19,7 +19,6 @@ __all__ = [
     'TextEntropyEstimator',
     'ImageEntropyEstimator',
     'CrossModalDependency',
-    'CrossModalEstimator',
     'RedundancyEstimator',
     'NoiseEstimator'
 ]
