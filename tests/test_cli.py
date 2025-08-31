@@ -5,11 +5,15 @@ import shutil
 from pathlib import Path
 from typing import List, Optional
 
+import importlib.util
 import numpy as np
 import pytest
 from click.testing import CliRunner
 
 from dewi.cli import cli
+
+if importlib.util.find_spec("torch") is None:  # pragma: no cover - optional dep
+    pytest.skip("torch not installed", allow_module_level=True)
 
 # Test data
 TEST_IDS = [f"d{i}" for i in range(5)]

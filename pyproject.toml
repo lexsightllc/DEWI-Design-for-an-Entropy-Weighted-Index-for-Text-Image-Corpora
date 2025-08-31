@@ -10,10 +10,10 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "Apache-2.0"}
 authors = [
-    {name = "DEWI Team", email = "dewi@example.com"}
+    {name = "DEWI Contributors", email = "contact@dewiproject.org"}
 ]
 maintainers = [
-    {name = "DEWI Maintainers", email = "dewi-maintainers@example.com"}
+    {name = "DEWI Maintainers", email = "maintainers@dewiproject.org"}
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -92,10 +92,10 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/actual_org/dewi"
-Documentation = "https://github.com/actual_org/dewi#readme"
-"Bug Tracker" = "https://github.com/actual_org/dewi/issues"
-Changelog = "https://github.com/actual_org/dewi/releases"
+Homepage = "https://github.com/dewi-project/dewi"
+Documentation = "https://github.com/dewi-project/dewi#readme"
+"Bug Tracker" = "https://github.com/dewi-project/dewi/issues"
+Changelog = "https://github.com/dewi-project/dewi/releases"
 
 [tool.black]
 line-length = 88
