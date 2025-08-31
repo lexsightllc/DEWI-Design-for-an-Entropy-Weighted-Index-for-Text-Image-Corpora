@@ -1,8 +1,4 @@
-""
-DEWI: Design for an Entropy-Weighted Index for Text+Image Corpora
-
-This module provides the command-line interface for DEWI.
-"""
+"""DEWI CLI entry point."""
 
 from dewi.cli import cli
 
