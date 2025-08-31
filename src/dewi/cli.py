@@ -64,38 +64,36 @@ def config(output: Optional[str], overwrite: bool, preset: str):
     
     # Apply preset overrides
     if preset != 'default':
-        if not hasattr(cfg, 'scoring') or not hasattr(cfg.scoring, 'weights'):
-            # Handle older config versions that might not have the nested structure
+        # Preferred path for current config structure
+        if hasattr(cfg, 'scoring') and hasattr(cfg.scoring, 'weights'):
             if preset == 'web':
-                # Web preset: higher weight on text entropy
-                if hasattr(cfg, 'entropy_weight'):  # Old style
-                    cfg.entropy_weight = 0.7
-                    cfg.redundancy_weight = 0.3
-                elif hasattr(cfg, 'scoring') and hasattr(cfg.scoring, 'weights'):
-                    cfg.scoring.weights.alpha_t = 0.7
-                    cfg.scoring.weights.alpha_r = 0.3
+                cfg.scoring.weights.alpha_t = 0.7
+                cfg.scoring.weights.alpha_r = 0.3
             elif preset == 'product':
-                # Product catalog: balanced with slight preference for images
-                if hasattr(cfg, 'entropy_weight'):  # Old style
-                    cfg.entropy_weight = 0.6
-                    cfg.redundancy_weight = 0.4
-                elif hasattr(cfg, 'scoring') and hasattr(cfg.scoring, 'weights'):
-                    cfg.scoring.weights.alpha_t = 0.6
-                    cfg.scoring.weights.alpha_r = 0.4
+                cfg.scoring.weights.alpha_t = 0.6
+                cfg.scoring.weights.alpha_r = 0.4
             elif preset == 'balanced':
-                # Balanced: equal weights
-                if hasattr(cfg, 'entropy_weight'):  # Old style
-                    cfg.entropy_weight = 0.5
-                    cfg.redundancy_weight = 0.5
-                elif hasattr(cfg, 'scoring') and hasattr(cfg.scoring, 'weights'):
-                    cfg.scoring.weights.alpha_t = 0.5
-                    cfg.scoring.weights.alpha_r = 0.5
+                cfg.scoring.weights.alpha_t = 0.5
+                cfg.scoring.weights.alpha_r = 0.5
+        else:
+            # Fallback for older config versions without nested scoring structure
+            if preset == 'web':
+                cfg.entropy_weight = 0.7
+                cfg.redundancy_weight = 0.3
+            elif preset == 'product':
+                cfg.entropy_weight = 0.6
+                cfg.redundancy_weight = 0.4
+            elif preset == 'balanced':
+                cfg.entropy_weight = 0.5
+                cfg.redundancy_weight = 0.5
     
     # Convert config to dictionary for YAML serialization
     if hasattr(cfg, 'dict'):  # Pydantic model
         config_dict = cfg.dict()
+    elif hasattr(cfg, 'to_dict'):
+        config_dict = cfg.to_dict()
     else:
-        # Fallback for non-Pydantic config objects
+        # Fallback for generic objects
         config_dict = {k: v for k, v in cfg.__dict__.items() if not k.startswith('_')}
     
     if output:
@@ -643,19 +641,6 @@ def _save_results(
         
     except Exception as e:
         click.echo(f"\n✗ Error saving results: {e}", err=True)
-        if TEST_MODE:
-            import traceback
-            traceback.print_exc()
-        raise
-        # Removed redundant embedding save code that was causing indentation issues
-            if embeddings:
-                np.savez_compressed(
-                    embeddings_file,
-                    embeddings=np.stack(embeddings),
-                    doc_ids=doc_ids
-                )
-    except Exception as e:
-        click.echo(f"Error saving results: {e}", err=True)
         if TEST_MODE:
             import traceback
             traceback.print_exc()
