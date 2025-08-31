@@ -92,10 +92,10 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/dewi"
-Documentation = "https://github.com/yourusername/dewi#readme"
-Bug Tracker = "https://github.com/yourusername/dewi/issues"
-Changelog = "https://github.com/yourusername/dewi/releases"
+Homepage = "https://github.com/actual_org/dewi"
+Documentation = "https://github.com/actual_org/dewi#readme"
+"Bug Tracker" = "https://github.com/actual_org/dewi/issues"
+Changelog = "https://github.com/actual_org/dewi/releases"
 
 [tool.black]
 line-length = 88
@@ -154,7 +154,7 @@ omit = [
     "**/__pycache__/*",
     "**/test_*.py"
 ]
-[coverage:report]
+[tool.coverage.report]
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",

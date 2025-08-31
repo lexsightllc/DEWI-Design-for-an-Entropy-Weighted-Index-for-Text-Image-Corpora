@@ -21,7 +21,7 @@ DEWI is a system for building and querying an entropy-weighted index that priori
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/dewi.git
+   git clone https://github.com/actual_org/dewi.git
    cd dewi
    ```
 
@@ -175,9 +175,9 @@ If you use DEWI in your research, please cite:
 ```bibtex
 @misc{dewi2023,
   title={DEWI: A Design for an Entropy-Weighted Index for Text+Image Corpora},
-  author={Your Name},
+  author={DEWI Contributors},
   year={2023},
-  howpublished={\url{https://github.com/yourusername/dewi}}
+  howpublished={\url{https://github.com/actual_org/dewi}}
 }
 ```
 
