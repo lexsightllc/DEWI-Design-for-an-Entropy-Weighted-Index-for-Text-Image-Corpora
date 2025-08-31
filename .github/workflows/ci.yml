@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install .[dev]
+      - name: Run tests
+        run: pytest
+      - name: Run gatekeeper audit
+        run: python scripts/gatekeeper_audit.py > gatekeeper_audit.json
+      - name: Export JSON schemas
+        run: |
+          python - <<'PY'
+from pathlib import Path
+from dewi import schemas
+schemas.export(Path('schemas'))
+PY
+      - name: Generate meta-signals
+        run: |
+          dewi config --output dewi.yaml
+          DEWI_TEST_MODE=1 dewi process dewi.yaml meta-signals
+      - name: Upload gatekeeper audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: gatekeeper-audit
+          path: gatekeeper_audit.json
+      - name: Upload JSON schemas
+        uses: actions/upload-artifact@v4
+        with:
+          name: json-schemas
+          path: schemas
+      - name: Upload meta-signals
+        uses: actions/upload-artifact@v4
+        with:
+          name: meta-signals
+          path: meta-signals
