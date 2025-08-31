@@ -187,7 +187,7 @@ def test_dewi_index_factory(doc_embeddings, doc_payloads, doc_ids):
     """Test DewiIndex factory function."""
     # Test with auto backend
     index = DewiIndex(dim=DIM, space="cosine")
-    assert isinstance(index, (ExactIndex, HNSWIndex, FAISSIndex))
+    assert isinstance(index, DewiIndex)
 
     # Add some documents - use more than k to ensure we have enough for search
     num_docs = 20
@@ -195,7 +195,7 @@ def test_dewi_index_factory(doc_embeddings, doc_payloads, doc_ids):
         index.add(doc_id, emb, payload)
 
     # Test build with explicit ntotal
-    index.build(ntotal=num_docs)
+    index.build()
     
     # Test search with k up to the number of documents we added
     k = min(5, num_docs)

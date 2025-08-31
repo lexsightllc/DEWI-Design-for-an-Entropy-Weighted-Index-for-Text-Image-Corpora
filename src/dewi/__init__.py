@@ -2,13 +2,14 @@
 
 __version__ = "0.1.0"
 
-# Export only lightweight symbols
-from .scorer import DewiScorer, RobustStats, Signals, Weights
+from .scorer import DewiScorer
+from .robust import RobustStats
+from .types import Weights, Payload
 
 __all__ = [
     "__version__",
     "DewiScorer",
     "RobustStats",
-    "Signals",
-    "Weights"
+    "Weights",
+    "Payload",
 ]
