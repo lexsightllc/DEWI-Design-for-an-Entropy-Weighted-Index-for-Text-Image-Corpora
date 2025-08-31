@@ -8,6 +8,7 @@ import torch
 from tqdm import tqdm
 
 from dewi.config import DewiConfig
+from dewi.types import Weights
 from dewi.signals.text_entropy import TextEntropyEstimator
 from dewi.signals.image_entropy import ImageEntropyEstimator
 from dewi.signals.cross_modal import CrossModalDependency
@@ -190,10 +191,10 @@ class DewiPipeline:
         
         # Initialize scorer
         scorer = DewiScorer(
-            weights=weights,
+            weights=Weights(**weights) if isinstance(weights, dict) else weights,
             delta=delta or self.config.scoring.delta,
-            mode=mode or self.config.scoring.mode
         )
+        scoring_mode = mode or self.config.scoring.mode
         
         # Collect signals
         signals = []
@@ -212,9 +213,12 @@ class DewiPipeline:
         if not scorer.is_fitted():
             scorer.fit_stats(signals)
         
-        # Compute scores
+        # Compute scores based on mode
         for doc, sig in zip(documents, signals):
-            doc.dewi_score = scorer.score(sig)
+            if scoring_mode == "conditional":
+                doc.dewi_score = scorer.score_conditional(sig)
+            else:
+                doc.dewi_score = scorer.score(sig)
         
         return documents
 

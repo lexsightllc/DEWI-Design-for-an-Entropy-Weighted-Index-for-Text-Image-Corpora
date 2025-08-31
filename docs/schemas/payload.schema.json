@@ -1,0 +1,46 @@
+{
+  "properties": {
+    "dewi": {
+      "default": 0.0,
+      "title": "Dewi",
+      "type": "number"
+    },
+    "ht_mean": {
+      "default": 0.0,
+      "title": "Ht Mean",
+      "type": "number"
+    },
+    "ht_q90": {
+      "default": 0.0,
+      "title": "Ht Q90",
+      "type": "number"
+    },
+    "hi_mean": {
+      "default": 0.0,
+      "title": "Hi Mean",
+      "type": "number"
+    },
+    "hi_q90": {
+      "default": 0.0,
+      "title": "Hi Q90",
+      "type": "number"
+    },
+    "I_hat": {
+      "default": 0.0,
+      "title": "I Hat",
+      "type": "number"
+    },
+    "redundancy": {
+      "default": 0.0,
+      "title": "Redundancy",
+      "type": "number"
+    },
+    "noise": {
+      "default": 0.0,
+      "title": "Noise",
+      "type": "number"
+    }
+  },
+  "title": "Payload",
+  "type": "object"
+}

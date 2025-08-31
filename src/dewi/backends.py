@@ -3,12 +3,13 @@
 from __future__ import annotations
 import json
 import os
-from dataclasses import dataclass, field, asdict
 from enum import Enum, auto
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union, Type, TypeVar
 import numpy as np
 import logging
+
+from .types import Payload
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -49,35 +50,6 @@ class IndexBackend(Enum):
 
 T = TypeVar('T', bound='BaseIndex')
 
-@dataclass
-class Payload:
-    """Container for document metadata and scores."""
-    dewi: float = 0.0
-    ht_mean: float = 0.0
-    ht_q90: float = 0.0
-    hi_mean: float = 0.0
-    hi_q90: float = 0.0
-    I_hat: float = 0.0
-    redundancy: float = 0.0
-    noise: float = 0.0
-    
-    def to_dict(self) -> Dict[str, float]:
-        """Convert payload to dictionary."""
-        return asdict(self)
-    
-    @classmethod
-    def from_dict(cls, data: Dict[str, float]) -> 'Payload':
-        """Create Payload from dictionary."""
-        return cls(**{k: float(v) for k, v in data.items() if hasattr(cls, k)})
-    
-    def to_bytes(self) -> bytes:
-        """Serialize payload to bytes for efficient storage."""
-        return json.dumps(self.to_dict()).encode('utf-8')
-    
-    @classmethod
-    def from_bytes(cls, data: bytes) -> 'Payload':
-        """Deserialize payload from bytes."""
-        return cls.from_dict(json.loads(data.decode('utf-8')))
 
 class BaseIndex:
     """Base class for index implementations."""
