@@ -1,5 +1,7 @@
 # DEWI: Design for an Entropy-Weighted Index for Text+Image Corpora
 
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
 DEWI is a system for building and querying an entropy-weighted index that prioritizes useful surprise in multimodal (text+image) data. It combines signals from text and image modalities to identify and retrieve the most informative content while suppressing redundancy and noise.
 
 ## Features
