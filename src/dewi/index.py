@@ -440,52 +440,71 @@ class ExactIndex(BaseIndex):
         self._is_trained = True
     
     def search(self, query: np.ndarray, k: int = 10, eta: float = 0.5, entropy_pref: float = 0.0) -> List[Tuple[str, float, Payload]]:
-        if not self._is_trained:
-            self.build()
-            
-        # Convert query to numpy array if needed
-        if not isinstance(query, np.ndarray):
-            query = np.array(query, dtype=np.float32)
+        """Search the index with DEWI re-ranking.
         
-        # Normalize query for cosine similarity
+        Optimized version that minimizes memory allocations and uses vectorized operations.
+        """
+        # Normalize query for cosine similarity if needed
+        query = np.asarray(query, dtype=np.float32)
         if self._normalize:
-            query = query / np.linalg.norm(query)
+            query_norm = np.linalg.norm(query)
+            if query_norm > 0:
+                query = query / query_norm
         
-        # Reshape for dot product
+        # Reshape query for matrix operations
         if query.ndim == 1:
             query = query.reshape(1, -1)
         
-        # Compute similarities
+        # Compute similarity scores (vectorized)
         if self._normalize:
-            # For cosine similarity, use dot product
+            # Cosine similarity: dot product of normalized vectors
             scores = np.dot(self._embeddings, query.T).flatten()
         else:
-            # For L2, compute negative squared distances
+            # Negative L2 distance
             scores = -np.sum((self._embeddings - query) ** 2, axis=1)
         
-        # Get top-k results based on similarity scores first
-        top_k_indices = np.argpartition(scores, -k)[-k:]
+        # Get top-2k candidates for re-ranking (or all if fewer than 2k)
+        candidate_count = min(2 * k, len(scores))
+        if candidate_count <= 0:
+            return []
+            
+        # Get top candidate indices in one pass
+        top_indices = np.argpartition(scores, -candidate_count)[-candidate_count:]
         
-        # Prepare results with DEWI re-ranking
-        results = []
-        for idx in top_k_indices:
+        # Extract scores and payloads for candidates
+        candidate_scores = scores[top_indices]
+        
+        # Pre-allocate arrays for DEWI scores and entropy
+        dewi_scores = np.zeros(candidate_count, dtype=np.float32)
+        entropies = np.zeros(candidate_count, dtype=np.float32)
+        
+        # Extract payload data in a single pass
+        for i, idx in enumerate(top_indices):
             doc_id = self._doc_ids[idx]
             payload = self._payloads[doc_id]
-            similarity_score = scores[idx]
-            
-            # Apply DEWI re-ranking
-            dewi_score = payload.dewi
-            adjusted_score = (1 - eta) * similarity_score + eta * dewi_score
-            
-            # Apply entropy preference if specified
-            if entropy_pref != 0:
-                entropy = (payload.ht_mean + payload.hi_mean) / 2
-                adjusted_score += entropy_pref * entropy
-            
-            results.append((doc_id, float(adjusted_score), payload))
+            dewi_scores[i] = payload.dewi
+            entropies[i] = (payload.ht_mean + payload.hi_mean) * 0.5  # Mean entropy
         
-        # Sort results by adjusted score in descending order
-        results.sort(key=lambda x: x[1], reverse=True)
+        # Apply DEWI re-ranking (vectorized)
+        adjusted_scores = (1 - eta) * candidate_scores + eta * dewi_scores
+        
+        # Apply entropy preference if needed (vectorized)
+        if entropy_pref != 0:
+            adjusted_scores += entropy_pref * entropies
+        
+        # Get top-k indices after re-ranking
+        top_k_indices = np.argpartition(adjusted_scores, -k)[-k:]
+        
+        # Sort top-k results by adjusted score (descending)
+        sorted_indices = top_k_indices[np.argsort(-adjusted_scores[top_k_indices])]
+        
+        # Prepare final results
+        results = []
+        for idx in sorted_indices:
+            doc_idx = top_indices[idx]
+            doc_id = self._doc_ids[doc_idx]
+            payload = self._payloads[doc_id]
+            results.append((doc_id, float(adjusted_scores[idx]), payload))
         
         return results
         

@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "DEWI: A Design for an Entropy-Weighted Index for Text+Image Corpora"
 readme = "README.md"
 requires-python = ">=3.9"
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 authors = [
     {name = "DEWI Team", email = "dewi@example.com"}
 ]
@@ -16,10 +16,10 @@ maintainers = [
     {name = "DEWI Maintainers", email = "dewi-maintainers@example.com"}
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -29,25 +29,66 @@ classifiers = [
     "Topic :: Software Development",
     "Topic :: Text Processing",
     "Topic :: Multimedia :: Graphics",
+    "Typing :: Typed",
     "Operating System :: OS Independent"
 ]
 keywords = ["information-retrieval", "machine-learning", "nlp", "computer-vision", "search"]
+
+# Core dependencies (minimal set for basic functionality)
 dependencies = [
-    # Core dependencies
     "numpy>=1.21.0,<2.0.0",
+    "click>=8.0.0,<9.0.0",
+    "pyyaml>=6.0,<7.0",
+    "pydantic>=1.10.0,<3.0.0"
+]
+
+[project.optional-dependencies]
+# For text processing and embeddings
+text = [
     "torch>=2.0.0,<3.0.0",
     "transformers>=4.30.0,<5.0.0",
-    "sentence-transformers>=2.2.0,<3.0.0",
+    "sentence-transformers>=2.2.0,<3.0.0"
+]
+
+# For image processing
+image = [
+    "Pillow>=9.0.0,<11.0.0",
+    "torchvision>=0.15.0,<1.0.0"
+]
+
+# For approximate nearest neighbor search
+ann = [
     "faiss-cpu>=1.7.0; platform_system!='Darwin' and platform_machine!='arm64'",
     "faiss-cpu-noavx2>=1.7.0; platform_system=='Darwin' and platform_machine=='arm64'",
-    "Pillow>=9.0.0,<11.0.0",
+    "hnswlib>=0.7.0,<0.8.0"
+]
+
+# For development and testing
+dev = [
+    "pytest>=7.0.0,<8.0.0",
+    "pytest-cov>=4.0.0,<5.0.0",
+    "mypy>=1.0.0,<2.0.0",
+    "types-PyYAML>=6.0.0,<7.0.0",
+    "black>=23.0.0,<24.0.0",
+    "isort>=5.12.0,<6.0.0",
+    "flake8>=6.0.0,<7.0.0"
+]
+
+# For documentation
+docs = [
+    "sphinx>=6.0.0,<7.0.0",
+    "sphinx-rtd-theme>=1.2.0,<2.0.0",
+    "sphinx-click>=4.4.0,<5.0.0"
+]
+
+# For all features
+all = [
+    "dewi[text]",
+    "dewi[image]",
+    "dewi[ann]",
     "tqdm>=4.62.0,<5.0.0",
     "scikit-learn>=1.0.0,<2.0.0",
-    "pyyaml>=6.0,<7.0",
-    "click>=8.0.0,<9.0.0",
-    "hnswlib>=0.7.0,<0.8.0",
-    "pydantic>=1.10.0,<3.0.0",
-    "dataclasses>=0.6; python_version<'3.7'"
+    "tqdm>=4.62.0,<5.0.0"
 ]
 
 [project.urls]
@@ -55,36 +96,6 @@ Homepage = "https://github.com/yourusername/dewi"
 Documentation = "https://github.com/yourusername/dewi#readme"
 Bug Tracker = "https://github.com/yourusername/dewi/issues"
 Changelog = "https://github.com/yourusername/dewi/releases"
-
-[project.optional-dependencies]
-dev = [
-    # Testing
-    "pytest>=7.0.0,<8.0.0",
-    "pytest-cov>=3.0.0,<5.0.0",
-    "pytest-mock>=3.10.0,<4.0.0",
-    "pytest-xdist>=3.0.0,<4.0.0",
-    "pytest-benchmark>=4.0.0,<5.0.0",
-    
-    # Linting & Formatting
-    "black>=23.0.0,<24.0.0",
-    "isort>=5.12.0,<6.0.0",
-    "mypy>=1.0.0,<2.0.0",
-    "pylint>=2.15.0,<3.0.0",
-    "ruff>=0.0.280,<0.1.0",
-    "types-PyYAML>=6.0.0,<7.0.0",
-    "types-dataclasses>=0.6.0,<1.0.0",
-    
-    # Documentation
-    "sphinx>=6.0.0,<8.0.0",
-    "sphinx-rtd-theme>=1.2.0,<2.0.0",
-    "sphinx-click>=4.4.0,<5.0.0",
-    "myst-parser>=1.0.0,<2.0.0",
-    
-    # Development tools
-    "jupyter>=1.0.0,<2.0.0",
-    "ipython>=8.0.0,<9.0.0",
-    "pre-commit>=3.0.0,<4.0.0"
-]
 
 [tool.black]
 line-length = 88

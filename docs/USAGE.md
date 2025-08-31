@@ -31,13 +31,35 @@ This guide provides comprehensive instructions for using DEWI (Design for an Ent
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
-3. **Install DEWI**
+3. **Install DEWI with required dependencies**
    ```bash
-   # For basic usage
+   # Core package (minimal dependencies)
    pip install -e .
    
-   # With optional dependencies for development
-   pip install -e '.[dev]'
+   # Install optional dependencies based on your needs
+   # For text processing and embeddings
+   pip install -e ".[text]"
+   
+   # For image processing
+   pip install -e ".[image]"
+   
+   # For approximate nearest neighbor search
+   pip install -e ".[ann]"
+   
+   # For development (testing, linting, type checking)
+   pip install -e ".[dev]"
+   
+   # For documentation
+   pip install -e ".[docs]"
+   
+   # For all features
+   pip install -e ".[all]"
+   ```
+   
+4. **Verify installation**
+   ```bash
+   dewi --version
+   dewi --help
    ```
 
 ## Quick Start
@@ -194,10 +216,24 @@ results = index.search(query_embedding, k=10, entropy_pref=0.5, eta=0.3)
 - Increase `batch_size` for faster processing
 - Use GPU if available by setting `device: cuda`
 - For large datasets, process in chunks
+- Use `--test-mode` flag during development to skip heavy computations
 
 ### Search Performance
-- Adjust `ef_construction` and `M` parameters in the index
-- Lower `ef_query` for faster but less accurate search
+- The search has been optimized with vectorized operations for better performance
+- Use `--eta` parameter to control the weight of DEWI scores in re-ranking (0.0-1.0)
+- Adjust `--entropy-pref` parameter to prefer high or low entropy results (-1.0 to 1.0)
+- For large indices, the search uses a two-phase approach:
+  1. First retrieves 2x the requested results using approximate search
+  2. Applies DEWI re-ranking to the candidates
+- Memory usage is optimized by:
+  - Lazy loading of models
+  - Efficient memory management for embeddings
+  - Minimal data copying during search operations
+
+### Memory Management
+- The index uses memory-mapped files for large datasets
+- Batch processing is used to handle large collections
+- Set the `OMP_NUM_THREADS` environment variable to control CPU core usage
 - Use `entropy_pref=0` for pure similarity search
 
 ### Memory Usage

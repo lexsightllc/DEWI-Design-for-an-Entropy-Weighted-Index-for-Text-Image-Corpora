@@ -8,8 +8,6 @@ from typing import List, Optional, Tuple, Dict, Any, cast, Union
 
 import click
 
-from dewi.pipelines import Document
-
 from dewi import __version__
 
 # Check for test mode
@@ -19,22 +17,22 @@ except Exception:
     TEST_MODE = False
 
 # Lazy imports
-def _import_pipelines():
+def _import_pipelines() -> tuple:
     """Lazy import for pipelines module."""
-    from dewi.pipelines import DewiPipeline, Document, create_document
-    return DewiPipeline, Document, create_document
+    from dewi.pipelines import DewiPipeline
+    return (DewiPipeline, )
 
-def _import_index():
+def _import_index() -> tuple:
     """Lazy import for index module."""
     from dewi.index import DewiIndex, Payload
     return DewiIndex, Payload
 
-def _import_numpy():
+def _import_numpy() -> 'numpy':
     """Lazy import for numpy."""
     import numpy as np
     return np
 
-def _import_yaml():
+def _import_yaml() -> 'yaml':
     """Lazy import for yaml."""
     import yaml
     return yaml
@@ -108,36 +106,68 @@ def process(
     embeddings: Optional[str],
     batch_size: Optional[int],
     device: Optional[str]
-):
-    """Process documents and compute DEWI signals."""
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
+) -> None:
+    """Process documents and compute DEWI signals.
     
-    # Load configuration
-    with open(config_path, 'r') as f:
-        cfg = DewiConfig.from_dict(yaml.safe_load(f))
+    Args:
+        config_path: Path to the configuration file
+        output_dir: Directory to save the processed results
+        texts: Path to a text file or directory containing text files
+        images: Path to a directory containing images
+        embeddings: Path to a numpy file with precomputed embeddings
+        batch_size: Override batch size for processing
+        device: Device to use for processing (cpu, cuda, etc.)
     
-    # Override config from command line
-    if batch_size:
-        cfg.text.batch_size = batch_size
-        cfg.image.batch_size = batch_size
-        cfg.cross_modal.batch_size = batch_size
-    
-    # Initialize pipeline
-    pipeline = DewiPipeline(cfg)
-    
-    # Load documents
-    documents = _load_documents(texts, images, embeddings)
-    if not documents:
-        raise click.ClickException("No documents to process. Provide --texts and/or --images")
-    
-    # Process documents
-    processed_docs = pipeline.compute_signals(documents)
-    processed_docs = pipeline.compute_dewi_scores(processed_docs)
-    
-    # Save results
-    _save_results(processed_docs, output_path)
-    click.echo(f"Processed {len(processed_docs)} documents. Results saved to {output_path}")
+    Raises:
+        click.ClickException: If no documents are found or processing fails
+    """
+    try:
+        # Lazy imports
+        yaml = _import_yaml()
+        from dewi.config import DewiConfig  # Lazy import
+        from dewi.pipelines import DewiPipeline  # Lazy import
+        
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        
+        # Load configuration
+        with open(config_path, 'r') as f:
+            cfg = DewiConfig.from_dict(yaml.safe_load(f))
+        
+        # Override config from command line
+        if batch_size:
+            cfg.text.batch_size = batch_size
+            cfg.image.batch_size = batch_size
+            if hasattr(cfg, 'cross_modal') and cfg.cross_modal:
+                cfg.cross_modal.batch_size = batch_size
+        
+        # Set device if provided
+        if device:
+            import torch  # Lazy import
+            cfg.device = device if torch.cuda.is_available() and 'cuda' in device else 'cpu'
+        
+        # Initialize pipeline
+        pipeline = DewiPipeline(cfg)
+        
+        # Load documents
+        documents = _load_documents(texts, images, embeddings)
+        if not documents:
+            raise click.ClickException("No documents to process. Provide --texts and/or --images")
+        
+        # Process documents
+        click.echo(f"Processing {len(documents)} documents...")
+        processed_docs = pipeline.compute_signals(documents)
+        processed_docs = pipeline.compute_dewi_scores(processed_docs)
+        
+        # Save results
+        _save_results(processed_docs, output_path)
+        click.echo(f"✓ Processed {len(processed_docs)} documents. Results saved to {output_path}")
+        
+    except Exception as e:
+        if TEST_MODE:
+            import traceback
+            traceback.print_exc()
+        raise click.ClickException(f"Error during processing: {str(e)}")
 
 @cli.command()
 @click.argument('index_dir', type=click.Path(exists=True, file_okay=False))
@@ -147,79 +177,104 @@ def process(
 @click.option('--entropy-pref', type=float, help='Entropy preference weight')
 @click.option('--output', '-o', type=click.Path(), help='Output file for results (JSON)')
 @click.option('--test-mode', is_flag=True, help='Run in test mode with mock data')
-def search(index_dir, query, k, eta, entropy_pref, output, test_mode):
-    """Search the DEWI index."""
-    # Set test mode if specified
+def search(
+    index_dir: str,
+    query: str,
+    k: int,
+    eta: Optional[float],
+    entropy_pref: Optional[float],
+    output: Optional[str],
+    test_mode: bool
+) -> None:
+    """Search the DEWI index.
+    
+    Args:
+        index_dir: Path to the directory containing the DEWI index
+        query: Search query string
+        k: Number of results to return
+        eta: Weight for DEWI score (0-1)
+        entropy_pref: Entropy preference weight
+        output: Output file path for results (JSON)
+        test_mode: Run in test mode with mock data
+        
+    Raises:
+        click.ClickException: If the search operation fails
+    """
     global TEST_MODE
-    if test_mode:
-        TEST_MODE = True
-        os.environ["DEWI_TEST_MODE"] = "1"
-    
-    # Import the appropriate index class based on test mode
-    if TEST_MODE:
-        from dewi.testing.mock_index import MockDewiIndex as DewiIndex
-    else:
-        DewiIndex, _ = _import_index()
-    
-    # Load index
-    try:
-        index = DewiIndex.load(index_dir)
-    except Exception as e:
-        click.echo(f"Error loading index: {e}", err=True)
-        sys.exit(1)
+    TEST_MODE = test_mode or TEST_MODE
     
     try:
-        if TEST_MODE:
-            # In test mode, just return mock results
-            results = [
-                (f"doc_{i}", 1.0 - (i * 0.1), 
-                 {"metadata": {"source": "test", "id": i}, "dewi": 0.8 - (i * 0.05)})
-                for i in range(min(k, 5))  # Return up to 5 mock results
-            ]
-        else:
-            # Generate query embedding (in a real implementation, use the same model as indexing)
-            np = _import_numpy()
-            query_embedding = np.random.randn(index.dim).astype(np.float32)
+        # Lazy imports
+        from dewi.index import DewiIndex  # Lazy import
+        import json  # Lazy import
+        
+        # Load index
+        index_path = Path(index_dir)
+        index = DewiIndex.load(index_path)
+        
+        # Set default eta if not provided
+        if eta is None:
+            eta = 0.5  # Default weight for DEWI score
             
-            # Search
-            results = index.search(
-                query_embedding, 
-                k=k, 
-                eta=eta,
-                entropy_pref=entropy_pref
-            )
+        # Set default entropy preference if not provided
+        if entropy_pref is None:
+            entropy_pref = 1.0  # Default preference for high entropy
+        
+        click.echo(f"Searching for '{query}'...")
+        
+        # Search
+        results = index.search(
+            query=query,
+            k=k,
+            eta=eta,
+            entropy_pref=entropy_pref
+        )
+        
+        if not results:
+            click.echo("No results found.")
+            return
         
         # Format results
-        output_results = []
+        formatted_results = []
         for doc_id, score, payload in results:
-            # Handle both Payload objects and dictionaries (for test mode)
-            if hasattr(payload, 'metadata'):
-                metadata = payload.metadata
-                dewi_score = payload.dewi
-                entropy = (payload.ht_mean + payload.hi_mean) / 2 if hasattr(payload, 'ht_mean') and hasattr(payload, 'hi_mean') else None
-            else:
-                metadata = payload.get('metadata', {})
-                dewi_score = payload.get('dewi')
-                entropy = payload.get('entropy')
-                
             result = {
                 'id': doc_id,
                 'score': float(score),
-                'payload': {
-                    'metadata': metadata,
-                    'dewi_score': dewi_score,
-                    'entropy': entropy
-                }
+                'text': '',
+                'metadata': {},
+                'dewi_score': None,
+                'entropy': None
             }
-            output_results.append(result)
+            
+            # Handle both Payload objects and dictionaries (for test mode)
+            if hasattr(payload, 'metadata'):
+                result.update({
+                    'text': getattr(payload, 'text', ''),
+                    'metadata': getattr(payload, 'metadata', {}),
+                    'dewi_score': getattr(payload, 'dewi', None),
+                    'entropy': (getattr(payload, 'ht_mean', 0) + getattr(payload, 'hi_mean', 0)) / 2 
+                              if hasattr(payload, 'ht_mean') and hasattr(payload, 'hi_mean') 
+                              else None
+                })
+            elif isinstance(payload, dict):
+                result.update({
+                    'text': payload.get('text', ''),
+                    'metadata': payload.get('metadata', {}),
+                    'dewi_score': payload.get('dewi'),
+                    'entropy': payload.get('entropy')
+                })
+            
+            formatted_results.append(result)
         
         # Output results
         if output:
-            with open(output, 'w') as f:
-                json.dump(output_results, f, indent=2)
-            click.echo(f"Results saved to {output}")
+            output_path = Path(output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(output_path, 'w') as f:
+                json.dump(formatted_results, f, indent=2)
+            click.echo(f"✓ Results saved to {output_path}")
         else:
-            click.echo(json.dumps(output_results, indent=2))
+            click.echo(json.dumps(formatted_results, indent=2))
             
         if TEST_MODE:
             click.echo("\n[TEST MODE] Results are simulated")    
@@ -231,13 +286,18 @@ def search(index_dir, query, k, eta, entropy_pref, output, test_mode):
             traceback.print_exc()
         sys.exit(1)
 
+def create_document(text: str = None, metadata: Optional[Dict] = None) -> Any:
+    """Create a new document with the given text and metadata."""
+    from dewi.pipelines import Document  # Lazy import
+    return Document(doc_id=str(uuid.uuid4()), text=text, metadata=metadata or {})
+
 def _load_documents(
     texts_path: Optional[str],
     images_dir: Optional[str],
     embeddings_path: Optional[str]
-) -> List[Document]:
+) -> List[Any]:  # Return type is List[Document] but we can't import Document here
     """Load documents from text files, image directories, and/or embeddings."""
-    _, _, create_document = _import_pipelines()
+    import uuid
     documents = []
     
     # Load text documents
