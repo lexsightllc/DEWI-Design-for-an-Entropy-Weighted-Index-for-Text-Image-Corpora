@@ -1026,3 +1026,8 @@ class DewiIndex(BaseIndex):
             return self._emb[idx]
         except ValueError:
             return None
+
+
+def create_dewi_index(dim: int, space: str = "cosine", backend: Union[str, IndexBackend] = "auto", **kwargs) -> DewiIndex:
+    """Backward-compatible factory for DewiIndex."""
+    return DewiIndex(dim=dim, space=space, backend=backend, **kwargs)
