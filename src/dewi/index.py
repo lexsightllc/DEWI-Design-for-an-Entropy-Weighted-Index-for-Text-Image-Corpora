@@ -584,73 +584,95 @@ class ExactIndex(BaseIndex):
         return index
 
 
-def DewiIndex(dim: int, space: str = "cosine", backend: Union[str, IndexBackend] = "auto", **kwargs) -> BaseIndex:
-    """Factory function to create an appropriate index based on available backends.
+class DewiIndex(BaseIndex):
+    """DEWI Index with support for multiple backends and entropy-weighted scoring.
+    
+    This class provides a unified interface for approximate nearest neighbor search
+    with support for multiple backends (FAISS, HNSW, or exact search). It includes
+    functionality for entropy-weighted scoring and re-ranking of results.
     
     Args:
-        dim: Dimensionality of the embeddings
+        dim: Dimensionality of the embedding space
         space: Distance metric ('cosine' or 'l2')
-        backend: Backend to use ('auto', 'faiss', 'hnsw', or 'exact')
+        backend: Backend to use (FAISS, HNSW, or exact)
+        ef: Size of the dynamic list for HNSW index building
+        M: Number of bi-directional links for HNSW
+        use_ann: Whether to use approximate nearest neighbor search
+        ef_query: Size of the dynamic list for search
+        rerank_eta: Weight of DEWI score in re-ranking (0.0 to 1.0)
+        entropy_pref: Entropy preference (-1.0 to 1.0, higher favors more surprising content)
         **kwargs: Additional backend-specific parameters
-        
-    Returns:
-        An instance of BaseIndex (or a subclass)
     """
-    if isinstance(backend, str):
-        backend = IndexBackend.from_str(backend)
-    
-    # Select backend based on availability and preference
-    if backend == IndexBackend.FAISS_IVFFLAT and _HAS_FAISS:
-        return FAISSIndex(dim, space, index_type="IVFFlat", **kwargs)
-    elif backend == IndexBackend.FAISS_HNSW and _HAS_FAISS:
-        return FAISSIndex(dim, space, index_type="HNSW", **kwargs)
-    elif backend == IndexBackend.HNSW and _HAS_HNSW:
-        return HNSWIndex(dim, space, **kwargs)
-    else:
-        logger.warning("Falling back to exact search. For better performance, install FAISS or HNSW.")
-        return ExactIndex(dim, space, **kwargs)
     
     def __init__(
-        self, 
-        dim: int, 
-        space: str = "cosine", 
-        ef: int = 200, 
+        self,
+        dim: int,
+        space: str = "cosine",
+        backend: Union[str, IndexBackend] = "auto",
+        ef: int = 200,
         M: int = 32,
         use_ann: bool = True,
         ef_query: int = 200,
         rerank_eta: float = 0.25,
-        entropy_pref: float = 0.0
+        entropy_pref: float = 0.0,
+        **kwargs
     ):
-        """Initialize the DEWI index.
-        
-        Args:
-            dim: Dimensionality of the embedding space
-            space: Distance metric ('cosine' or 'l2')
-            ef: Size of the dynamic list for index building
-            M: Number of bi-directional links for each element
-            use_ann: Whether to use approximate nearest neighbor search
-            ef_query: Size of the dynamic list for search (higher = more accurate but slower)
-            rerank_eta: Weight of DEWI score in re-ranking (0.0 to 1.0)
-            entropy_pref: Entropy preference (-1.0 to 1.0, higher favors more surprising content)
-        """
-        self.dim = dim
-        self.space = space
+        """Initialize the DEWI index."""
+        super().__init__(dim, space)
         self._ids: List[str] = []
         self._emb: List[np.ndarray] = []
         self._payloads: Dict[str, Payload] = {}
         self._meta: Dict[str, Dict[str, Any]] = {}
-        self._use_ann = use_ann and _HAS_HNSW
         self.ef_query = ef_query
         self.rerank_eta = rerank_eta
         self.entropy_pref = entropy_pref
+        self._built = False
         
-        if self._use_ann:
-            self._index = hnswlib.Index(space=space, dim=dim)
-            self._index.init_index(max_elements=1, ef_construction=ef, M=M)
-            self._built = False
-        else:
-            self._index = None
-            self._built = True  # Use exact search
+        # Determine backend
+        if isinstance(backend, str):
+            backend = IndexBackend.from_str(backend)
+        
+        # Initialize the appropriate backend
+        self._use_ann = use_ann
+        self._backend = None
+        
+        if use_ann:
+            if backend == IndexBackend.FAISS_IVFFLAT and _HAS_FAISS:
+                self._backend = FAISSIndex(dim, space, index_type="IVFFlat", **kwargs)
+            elif backend == IndexBackend.FAISS_HNSW and _HAS_FAISS:
+                self._backend = FAISSIndex(dim, space, index_type="HNSW", **kwargs)
+            elif backend == IndexBackend.HNSW and _HAS_HNSW:
+                self._backend = HNSWIndex(dim, space, ef_construction=ef, M=M, **kwargs)
+        
+        # Fall back to exact search if no ANN backend is available or requested
+        if self._backend is None:
+            if use_ann:
+                logger.warning("Falling back to exact search. For better performance, install FAISS or HNSW.")
+            self._backend = ExactIndex(dim, space, **kwargs)
+    
+    @classmethod
+    def create(
+        cls,
+        dim: int,
+        space: str = "cosine",
+        backend: Union[str, IndexBackend] = "auto",
+        **kwargs
+    ) -> 'DewiIndex':
+        """Factory method to create a new DewiIndex instance.
+        
+        This is provided for backward compatibility with code that used the
+        DewiIndex factory function.
+        
+        Args:
+            dim: Dimensionality of the embeddings
+            space: Distance metric ('cosine' or 'l2')
+            backend: Backend to use ('auto', 'faiss', 'hnsw', or 'exact')
+            **kwargs: Additional backend-specific parameters
+            
+        Returns:
+            A new DewiIndex instance
+        """
+        return cls(dim=dim, space=space, backend=backend, **kwargs)
     
     def add(
         self, 
@@ -667,49 +689,48 @@ def DewiIndex(dim: int, space: str = "cosine", backend: Union[str, IndexBackend]
             payload: DEWI scores and signals
             meta: Optional metadata dictionary
         """
+        # Validate input
+        if not isinstance(doc_id, str):
+            raise ValueError(f"doc_id must be a string, got {type(doc_id)}")
+            
+        if not isinstance(payload, Payload):
+            raise ValueError(f"payload must be an instance of Payload, got {type(payload)}")
+            
         embedding = np.asarray(embedding, dtype=np.float32)
         if embedding.shape != (self.dim,):
             raise ValueError(f"Expected embedding of shape ({self.dim},), got {embedding.shape}")
             
+        # Add to our internal storage
         self._ids.append(doc_id)
         self._emb.append(embedding)
         self._payloads[doc_id] = payload
-        if meta:
+        if meta is not None:
             self._meta[doc_id] = meta
+            
+        # Add to the backend index if it's built
+        if hasattr(self, '_backend') and self._backend is not None:
+            self._backend.add(doc_id, embedding, payload)
     
     def build(self, ef_construction: Optional[int] = None, M: Optional[int] = None) -> None:
-        """Build the index for efficient search.
+        """Build the index after adding documents.
+        
+        This method must be called after adding documents and before searching
+        for optimal performance with ANN backends.
         
         Args:
-            ef_construction: Optional override for ef_construction parameter
-            M: Optional override for M parameter (number of bi-directional links)
+            ef_construction: Size of the dynamic list for index building (HNSW)
+            M: Number of bi-directional links (HNSW)
         """
-        if not self._use_ann or not self._emb:
-            self._built = True
+        if not self._emb:
+            logger.warning("No documents to index")
             return
             
-        xb = np.stack(self._emb, axis=0)
+        if hasattr(self._backend, 'build'):
+            # If the backend supports building, delegate to it
+            self._backend.build(ef_construction=ef_construction, M=M)
         
-        # Reinitialize index with new parameters if provided
-        if ef_construction is not None or M is not None:
-            current_ef = self._index.ef_construction if hasattr(self._index, 'ef_construction') else 200
-            current_M = self._index.M if hasattr(self._index, 'M') else 16
-            
-            new_ef = ef_construction if ef_construction is not None else current_ef
-            new_M = M if M is not None else current_M
-            
-            self._index = hnswlib.Index(space=self.space, dim=self.dim)
-            self._index.init_index(
-                max_elements=len(self._emb) + 1000,  # Some headroom
-                ef_construction=new_ef,
-                M=new_M
-            )
-        
-        # Resize and add items
-        self._index.resize_index(max_elements=len(self._emb) + 1000)
-        self._index.add_items(xb, np.arange(len(self._emb)))
-        self._index.set_ef(self.ef_query)
         self._built = True
+        logger.info(f"Built index with {len(self._ids)} documents")
     
     def _search_exact(
         self, 
@@ -736,19 +757,98 @@ def DewiIndex(dim: int, space: str = "cosine", backend: Union[str, IndexBackend]
         else:
             raise ValueError(f"Unsupported space: {self.space}")
     
+    def _rerank_with_dewi(
+        self,
+        query: np.ndarray,
+        results: List[Tuple[str, float, Payload]],
+        eta: float,
+        entropy_pref: float
+    ) -> List[Tuple[str, float, Payload]]:
+        """Re-rank search results using DEWI scoring.
+        
+        Args:
+            query: The query embedding
+            results: Initial search results (doc_id, score, payload)
+            eta: Weight of DEWI score in re-ranking
+            entropy_pref: Entropy preference (-1.0 to 1.0)
+            
+        Returns:
+            Re-ranked results with updated scores
+        """
+        if not results:
+            return []
+            
+        # Extract components for re-ranking
+        doc_ids, scores, payloads = zip(*results)
+        doc_ids = list(doc_ids)
+        scores = np.array(scores, dtype=np.float32)
+        
+        # Get text and image entropy scores
+        ht_means = np.array([p.ht_mean for p in payloads], dtype=np.float32)
+        hi_means = np.array([p.hi_mean for p in payloads], dtype=np.float32)
+        
+        # Combine entropy scores based on preference
+        # When entropy_pref > 0, higher entropy is preferred (more surprising)
+        # When entropy_pref < 0, lower entropy is preferred (more typical)
+        entropy_scores = 0.5 * (ht_means + hi_means)  # Average of text and image entropy
+        
+        # Normalize scores to [0, 1]
+        if len(scores) > 1:
+            # Avoid division by zero
+            score_min, score_max = scores.min(), scores.max()
+            if score_max > score_min:
+                norm_scores = (scores - score_min) / (score_max - score_min)
+            else:
+                norm_scores = np.ones_like(scores)
+        else:
+            norm_scores = np.ones_like(scores)
+            
+        # Normalize entropy scores to [0, 1]
+        if len(entropy_scores) > 1:
+            entropy_min, entropy_max = entropy_scores.min(), entropy_scores.max()
+            if entropy_max > entropy_min:
+                norm_entropy = (entropy_scores - entropy_min) / (entropy_max - entropy_min)
+            else:
+                norm_entropy = np.ones_like(entropy_scores)
+        else:
+            norm_entropy = np.ones_like(entropy_scores)
+            
+        # Apply entropy preference
+        if entropy_pref > 0:
+            # Higher entropy is better (more surprising)
+            entropy_weights = norm_entropy * entropy_pref
+        elif entropy_pref < 0:
+            # Lower entropy is better (more typical)
+            entropy_weights = (1.0 - norm_entropy) * abs(entropy_pref)
+        else:
+            entropy_weights = np.zeros_like(norm_entropy)
+            
+        # Combine scores with entropy weighting
+        combined_scores = (1.0 - eta) * norm_scores + eta * entropy_weights
+        
+        # Sort by combined score
+        sorted_indices = np.argsort(-combined_scores)  # Descending order
+        
+        # Return re-ranked results
+        return [
+            (doc_ids[i], float(combined_scores[i]), payloads[i])
+            for i in sorted_indices
+        ]
+    
     def search(
         self, 
         query: np.ndarray, 
         k: int = 10, 
-        entropy_pref: Optional[float] = None, 
-        eta: Optional[float] = None
+        eta: Optional[float] = None,
+        entropy_pref: Optional[float] = None
     ) -> List[Tuple[str, float, Payload]]:
         """Search for similar documents with DEWI re-ranking.
         
         Args:
             query: Query embedding vector
             k: Number of results to return
-            entropy_pref: Optional override for entropy preference in [-1, 1], 
+            eta: Weight of DEWI score in re-ranking (0.0 to 1.0)
+            entropy_pref: Entropy preference (-1.0 to 1.0, higher favors more surprising content)
                          where +1 favors higher DEWI scores. If None, uses instance default.
             eta: Optional override for DEWI score weight in re-ranking (0.0 to 1.0).
                  If None, uses instance default.

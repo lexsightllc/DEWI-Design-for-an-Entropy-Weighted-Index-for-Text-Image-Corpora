@@ -51,25 +51,52 @@ def cli(ctx):
 
 @cli.command()
 @click.option('--output', '-o', type=click.Path(), help='Output config file path')
+@click.option('--overwrite', is_flag=True, help='Overwrite output file if it exists')
 @click.option('--preset', type=click.Choice(['default', 'web', 'product', 'balanced']), 
               default='default', help='Configuration preset')
-def config(output: Optional[str], preset: str):
+def config(output: Optional[str], overwrite: bool, preset: str):
     """Generate a configuration file with default settings."""
+    yaml = _import_yaml()
+    from dewi.config import get_default_config
+    
+    # Get default config
     cfg = get_default_config()
     
     # Apply preset overrides
-    if preset == 'web':
-        # Web preset configuration
-        cfg.entropy_weight = 0.7
-        cfg.redundancy_weight = 0.3
-    elif preset == 'product':
-        # Product catalog preset
-        cfg.entropy_weight = 0.6
-        cfg.redundancy_weight = 0.4
-    elif preset == 'balanced':
-        # Balanced preset
-        cfg.entropy_weight = 0.5
-        cfg.redundancy_weight = 0.5
+    if preset != 'default':
+        if not hasattr(cfg, 'scoring') or not hasattr(cfg.scoring, 'weights'):
+            # Handle older config versions that might not have the nested structure
+            if preset == 'web':
+                # Web preset: higher weight on text entropy
+                if hasattr(cfg, 'entropy_weight'):  # Old style
+                    cfg.entropy_weight = 0.7
+                    cfg.redundancy_weight = 0.3
+                elif hasattr(cfg, 'scoring') and hasattr(cfg.scoring, 'weights'):
+                    cfg.scoring.weights.alpha_t = 0.7
+                    cfg.scoring.weights.alpha_r = 0.3
+            elif preset == 'product':
+                # Product catalog: balanced with slight preference for images
+                if hasattr(cfg, 'entropy_weight'):  # Old style
+                    cfg.entropy_weight = 0.6
+                    cfg.redundancy_weight = 0.4
+                elif hasattr(cfg, 'scoring') and hasattr(cfg.scoring, 'weights'):
+                    cfg.scoring.weights.alpha_t = 0.6
+                    cfg.scoring.weights.alpha_r = 0.4
+            elif preset == 'balanced':
+                # Balanced: equal weights
+                if hasattr(cfg, 'entropy_weight'):  # Old style
+                    cfg.entropy_weight = 0.5
+                    cfg.redundancy_weight = 0.5
+                elif hasattr(cfg, 'scoring') and hasattr(cfg.scoring, 'weights'):
+                    cfg.scoring.weights.alpha_t = 0.5
+                    cfg.scoring.weights.alpha_r = 0.5
+    
+    # Convert config to dictionary for YAML serialization
+    if hasattr(cfg, 'dict'):  # Pydantic model
+        config_dict = cfg.dict()
+    else:
+        # Fallback for non-Pydantic config objects
+        config_dict = {k: v for k, v in cfg.__dict__.items() if not k.startswith('_')}
     
     if output:
         output_path = Path(output)
@@ -78,8 +105,9 @@ def config(output: Optional[str], preset: str):
             sys.exit(1)
             
         try:
-            with open(output_path, 'w') as f:
-                yaml.dump(default_config.dict(), f, default_flow_style=False, sort_keys=False)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(output_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)
             click.echo(f"Configuration saved to {output_path}")
         except Exception as e:
             click.echo(f"Error saving config: {e}", err=True)
@@ -87,8 +115,9 @@ def config(output: Optional[str], preset: str):
     else:
         # Print to stdout
         click.echo("# DEWI Configuration")
+        click.echo(f"# Preset: {preset}")
         click.echo("# Save this to a file and modify as needed\n")
-        click.echo(yaml.dump(default_config.dict(), default_flow_style=False, sort_keys=False))
+        click.echo(yaml.dump(config_dict, default_flow_style=False, sort_keys=False))
 
 @cli.command()
 @click.argument('config_path', type=click.Path(exists=True, dir_okay=False))
@@ -294,94 +323,203 @@ def create_document(text: str = None, metadata: Optional[Dict] = None) -> Any:
 def _load_documents(
     texts_path: Optional[str],
     images_dir: Optional[str],
-    embeddings_path: Optional[str]
-) -> List[Any]:  # Return type is List[Document] but we can't import Document here
-    """Load documents from text files, image directories, and/or embeddings."""
+    embeddings_path: Optional[str],
+    max_workers: int = 4
+) -> List[Any]:
+    """Load documents from text files, image directories, and/or embeddings.
+    
+    Args:
+        texts_path: Path to a text file or directory containing text files
+        images_dir: Path to a directory containing images
+        embeddings_path: Path to a numpy file with precomputed embeddings
+        max_workers: Maximum number of worker processes for parallel loading
+        
+    Returns:
+        List of Document objects with metadata
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from tqdm import tqdm
     import uuid
+    
     documents = []
     
+    def _load_text_file(file_path: Path) -> Optional[Any]:
+        """Helper to load a single text file."""
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read()
+                return create_document(
+                    text=content,
+                    metadata={
+                        "source": str(file_path),
+                        "type": "text",
+                        "file_size": file_path.stat().st_size,
+                        "last_modified": file_path.stat().st_mtime
+                    }
+                )
+        except Exception as e:
+            click.echo(f"Error reading {file_path}: {e}", err=True)
+            return None
+    
     # Load text documents
-    if texts_path and not TEST_MODE:  # Skip in test mode as we'll use mock data
+    if texts_path and not TEST_MODE:
         texts_path = Path(texts_path)
-        if texts_path.is_file() and texts_path.suffix == '.txt':
-            # Single text file
-            try:
-                with open(texts_path) as f:
-                    content = f.read()
-                    doc = create_document(
-                        text=content,
-                        metadata={"source": str(texts_path)}
-                    )
-                    documents.append(doc)
-            except Exception as e:
-                click.echo(f"Error reading {texts_path}: {e}", err=True)
+        text_files = []
+        
+        if texts_path.is_file():
+            if texts_path.suffix.lower() in ('.txt', '.md', '.json', '.jsonl'):
+                text_files.append(texts_path)
         elif texts_path.is_dir():
-            # Directory of text files
-            for txt_file in texts_path.glob('**/*.txt'):
-                try:
-                    with open(txt_file) as f:
-                        content = f.read()
-                        doc = create_document(
-                            text=content,
-                            metadata={"source": str(txt_file)}
-                        )
+            # Support multiple text file formats
+            for ext in ('*.txt', '*.md', '*.json', '*.jsonl'):
+                text_files.extend(texts_path.glob(f'**/{ext}'))
+        
+        # Process text files in parallel
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(_load_text_file, f) for f in text_files]
+            with tqdm(total=len(futures), desc="Loading text files", unit="file") as pbar:
+                for future in as_completed(futures):
+                    doc = future.result()
+                    if doc:
                         documents.append(doc)
+                    pbar.update(1)
+    
+    # Load images
+    if images_dir and not TEST_MODE:
+        images_path = Path(images_dir)
+        if images_path.exists() and images_path.is_dir():
+            image_files = list(images_path.glob('**/*.jpg')) + \
+                         list(images_path.glob('**/*.jpeg')) + \
+                         list(images_path.glob('**/*.png'))
+            
+            for img_path in tqdm(image_files, desc="Loading images", unit="image"):
+                try:
+                    doc = create_document(
+                        text="",  # Will be filled by image captioning
+                        metadata={
+                            "source": str(img_path),
+                            "type": "image",
+                            "file_size": img_path.stat().st_size,
+                            "last_modified": img_path.stat().st_mtime,
+                            "dimensions": None,  # Will be filled during processing
+                            "format": img_path.suffix.lower()
+                        }
+                    )
+                    # Store image path for later processing
+                    doc.image_path = str(img_path)
+                    documents.append(doc)
                 except Exception as e:
-                    click.echo(f"Error reading {txt_file}: {e}", err=True)
+                    click.echo(f"Error processing {img_path}: {e}", err=True)
     
-    # In test mode, return an empty list (will be handled by the caller)
+    # Load precomputed embeddings
+    if embeddings_path and not TEST_MODE:
+        try:
+            np = _import_numpy()
+            data = np.load(embeddings_path, allow_pickle=True)
+            
+            if 'embeddings' in data and 'doc_ids' in data:
+                for i, (emb, doc_id) in enumerate(zip(data['embeddings'], data['doc_ids'])):
+                    doc = create_document(
+                        text="",
+                        metadata={
+                            "source": f"embeddings_{i}",
+                            "type": "embedding",
+                            "embedding_shape": emb.shape
+                        }
+                    )
+                    doc.embedding = emb
+                    documents.append(doc)
+        except Exception as e:
+            click.echo(f"Error loading embeddings from {embeddings_path}: {e}", err=True)
+    
+    # In test mode, return mock data
     if TEST_MODE:
-        return []
-    
-    # TODO: Add support for loading images and embeddings
-    # This is a placeholder for the actual implementation
+        return [
+            create_document(
+                text=f"Test document {i}",
+                metadata={"test": True, "id": i}
+            )
+            for i in range(5)
+        ]
     
     return documents
 
-def _save_results(documents, output_dir):
-    """Save processing results to disk."""
+def _save_results(
+    documents: List[Any],
+    output_dir: Union[str, Path],
+    save_embeddings: bool = True,
+    save_signals: bool = True,
+    save_text: bool = True,
+    batch_size: int = 1000
+) -> None:
+    """Save processing results to disk in a structured format.
+    
+    Args:
+        documents: List of Document objects to save
+        output_dir: Directory to save the results
+        save_embeddings: Whether to save document embeddings
+        save_signals: Whether to save signal information
+        save_text: Whether to save document text
+        batch_size: Number of documents to process in each batch
+    """
     import json
+    import shutil
     from pathlib import Path
+    from datetime import datetime
+    from typing import Dict, Any, List, Optional
     
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # In test mode, just create empty files
+    # Create a backup of existing output directory if it exists
+    if output_dir.exists() and any(output_dir.iterdir()):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_dir = output_dir.parent / f"{output_dir.name}_backup_{timestamp}"
+        shutil.copytree(output_dir, backup_dir)
+        click.echo(f"Created backup of existing output at {backup_dir}")
+    
+    # In test mode, generate and save mock data
     if TEST_MODE:
-        # Create a simple test output
         test_data = [
             {
                 'id': f'doc_{i}',
-                'text': f'Test document {i}',
-                'metadata': {'source': 'test', 'id': i},
-                'signals': {
-                    'ht_mean': 0.5 + (i * 0.1),
-                    'hi_mean': 0.4 + (i * 0.05),
-                    'I_hat': 0.3 + (i * 0.02),
-                    'redundancy': 0.1,
-                    'noise': 0.05
+                'text': f'Test document {i} with some sample content to test the DEWI system.',
+                'metadata': {
+                    'source': 'test',
+                    'id': i,
+                    'type': 'test',
+                    'created': datetime.now().isoformat()
                 },
-                'embedding': [0.1 * (i + 1)] * 10  # Simple test embedding
+                'signals': {
+                    'ht_mean': round(0.5 + (i * 0.1), 4),
+                    'hi_mean': round(0.4 + (i * 0.05), 4),
+                    'I_hat': round(0.3 + (i * 0.02), 4),
+                    'redundancy': round(0.1 + (i * 0.01), 4),
+                    'noise': round(0.05 + (i * 0.005), 4),
+                    'entropy_score': round(0.7 - (i * 0.05), 4)
+                },
+                'embedding': [round(0.1 * (i + 1), 4) for _ in range(10)]  # Simple test embedding
             }
-            for i in range(5)  # Create 5 test documents
+            for i in range(10)  # Create 10 test documents
         ]
         
-        # Save test documents
-        with open(output_dir / 'documents.jsonl', 'w') as f:
+        # Save test documents in JSONL format
+        with open(output_dir / 'documents.jsonl', 'w', encoding='utf-8') as f:
             for doc in test_data:
-                f.write(json.dumps(doc) + '\n')
+                f.write(json.dumps(doc, ensure_ascii=False) + '\n')
         
         # Save test signals summary
-        signals_data = [
-            {
+        signals_data = []
+        for doc in test_data:
+            sig = {
                 'id': doc['id'],
+                'source': doc['metadata'].get('source', ''),
                 **doc['signals']
             }
-            for doc in test_data
-        ]
+            signals_data.append(sig)
         
-        with open(output_dir / 'signals_summary.json', 'w') as f:
-            json.dump(signals_data, f, indent=2)
+        with open(output_dir / 'signals_summary.json', 'w', encoding='utf-8') as f:
+            json.dump(signals_data, f, indent=2, ensure_ascii=False)
         
         # Save test embeddings
         np = _import_numpy()
@@ -394,51 +532,122 @@ def _save_results(documents, output_dir):
             doc_ids=doc_ids
         )
         
+        # Save metadata
+        metadata = {
+            'version': '1.0.0',
+            'created_at': datetime.now().isoformat(),
+            'num_documents': len(test_data),
+            'dimensions': embeddings.shape[1] if len(embeddings.shape) > 1 else 0,
+            'test_mode': True
+        }
+        with open(output_dir / 'metadata.json', 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, indent=2, ensure_ascii=False)
+        
         return
     
-    # Normal mode - save actual documents
+    # Normal mode - process real documents
     try:
-        # Save documents with their metadata and signals
-        documents_file = output_dir / 'documents.jsonl'
-        with open(documents_file, 'w') as f:
-            for doc in documents:
-                # Convert document to dict
-                doc_dict = {
-                    'id': doc.id,
-                    'text': doc.text,
-                    'metadata': doc.metadata,
-                    'signals': doc.signals.dict() if hasattr(doc, 'signals') and doc.signals else {},
-                    'embedding': doc.embedding.tolist() if hasattr(doc, 'embedding') and doc.embedding is not None else None
+        # Initialize metadata
+        metadata = {
+            'version': '1.0.0',
+            'created_at': datetime.now().isoformat(),
+            'num_documents': len(documents),
+            'save_embeddings': save_embeddings,
+            'save_signals': save_signals,
+            'save_text': save_text,
+            'test_mode': False
+        }
+        
+        # Process documents in batches
+        total_batches = (len(documents) + batch_size - 1) // batch_size
+        
+        for batch_idx in range(0, len(documents), batch_size):
+            batch = documents[batch_idx:batch_idx + batch_size]
+            batch_num = (batch_idx // batch_size) + 1
+            
+            # Prepare batch data
+            batch_docs = []
+            batch_embeddings = []
+            batch_signals = []
+            
+            for doc in batch:
+                # Document data
+                doc_data = {
+                    'id': getattr(doc, 'id', str(uuid.uuid4())),
+                    'metadata': getattr(doc, 'metadata', {})
                 }
-                f.write(json.dumps(doc_dict) + '\n')
+                
+                # Add text if available and requested
+                if save_text and hasattr(doc, 'text'):
+                    doc_data['text'] = doc.text
+                
+                # Add signals if available and requested
+                if save_signals and hasattr(doc, 'signals') and doc.signals:
+                    signals = doc.signals.dict() if hasattr(doc.signals, 'dict') else dict(doc.signals)
+                    doc_data['signals'] = signals
+                    
+                    # Add to signals summary
+                    sig_data = {'id': doc_data['id']}
+                    if 'source' in doc_data['metadata']:
+                        sig_data['source'] = doc_data['metadata']['source']
+                    sig_data.update(signals)
+                    batch_signals.append(sig_data)
+                
+                # Add embedding if available and requested
+                if save_embeddings and hasattr(doc, 'embedding') and doc.embedding is not None:
+                    embedding = doc.embedding
+                    if hasattr(embedding, 'tolist'):
+                        embedding = embedding.tolist()
+                    doc_data['embedding'] = embedding
+                    
+                    # Store for batch processing
+                    if save_embeddings:
+                        batch_embeddings.append((doc_data['id'], embedding))
+                
+                batch_docs.append(doc_data)
+            
+            # Save batch documents
+            batch_file = output_dir / f"documents_batch_{batch_num:04d}.jsonl"
+            with open(batch_file, 'w', encoding='utf-8') as f:
+                for doc in batch_docs:
+                    f.write(json.dumps(doc, ensure_ascii=False) + '\n')
+            
+            # Save batch embeddings
+            if batch_embeddings and save_embeddings:
+                np = _import_numpy()
+                ids, embs = zip(*batch_embeddings)
+                emb_file = output_dir / f"embeddings_batch_{batch_num:04d}.npz"
+                np.savez_compressed(
+                    emb_file,
+                    doc_ids=ids,
+                    embeddings=np.array(embs, dtype=np.float32)
+                )
+            
+            click.echo(f"Processed batch {batch_num}/{total_batches} ({len(batch)} documents)")
         
         # Save signals summary
-        if any(hasattr(doc, 'signals') and doc.signals for doc in documents):
+        if batch_signals and save_signals:
             signals_file = output_dir / 'signals_summary.json'
-            signals_data = []
-            for doc in documents:
-                if hasattr(doc, 'signals') and doc.signals:
-                    signals_data.append({
-                        'id': doc.id,
-                        **doc.signals.dict()
-                    })
-            
-            if signals_data:
-                with open(signals_file, 'w') as f:
-                    json.dump(signals_data, f, indent=2)
+            with open(signals_file, 'w', encoding='utf-8') as f:
+                json.dump(batch_signals, f, indent=2, ensure_ascii=False)
         
-        # Save embeddings if available
-        if any(hasattr(doc, 'embedding') and doc.embedding is not None for doc in documents):
-            np = _import_numpy()
-            embeddings_file = output_dir / 'embeddings.npz'
-            embeddings = []
-            doc_ids = []
-            
-            for doc in documents:
-                if hasattr(doc, 'embedding') and doc.embedding is not None:
-                    embeddings.append(doc.embedding)
-                    doc_ids.append(doc.id)
-            
+        # Update metadata with actual counts
+        if hasattr(documents[0], 'embedding') and documents[0].embedding is not None:
+            metadata['dimensions'] = len(documents[0].embedding)
+        
+        # Save metadata
+        with open(output_dir / 'metadata.json', 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, indent=2, ensure_ascii=False)
+        
+        click.echo(f"\n✓ Successfully saved {len(documents)} documents to {output_dir}")
+        
+    except Exception as e:
+        click.echo(f"\n✗ Error saving results: {e}", err=True)
+        if TEST_MODE:
+            import traceback
+            traceback.print_exc()
+        raise
+        # Removed redundant embedding save code that was causing indentation issues
             if embeddings:
                 np.savez_compressed(
                     embeddings_file,

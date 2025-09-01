@@ -57,19 +57,82 @@ class ImageEntropyEstimator:
             image = Image.open(image).convert('RGB')
         return self.transform(image).unsqueeze(0).to(self.device)
     
+    def _patchify(self, imgs: torch.Tensor) -> torch.Tensor:
+        """Convert images to patches.
+        
+        Args:
+            imgs: (N, 3, H, W) tensor of images
+            
+        Returns:
+            (N, L, patch_size**2 * 3) tensor of patches
+        """
+        p = self.model.config.patch_size
+        assert imgs.shape[2] % p == 0 and imgs.shape[3] % p == 0, 'Image dimensions must be divisible by patch size.'
+        
+        h = imgs.shape[2] // p
+        w = imgs.shape[3] // p
+        
+        x = imgs.reshape(shape=(imgs.shape[0], 3, h, p, w, p))
+        x = torch.einsum('nchpwq->nhwpqc', x)
+        patches = x.reshape(shape=(imgs.shape[0], h * w, p**2 * 3))
+        return patches
+        
+    def _unpatchify(self, patches: torch.Tensor) -> torch.Tensor:
+        """Convert patches back to images.
+        
+        Args:
+            patches: (N, L, patch_size**2 * 3) tensor of patches
+            
+        Returns:
+            (N, 3, H, W) tensor of images
+        """
+        p = self.model.config.patch_size
+        h = w = int(patches.shape[1] ** 0.5)
+        assert h * w == patches.shape[1], 'Number of patches must be a perfect square.'
+        
+        x = patches.reshape(shape=(patches.shape[0], h, w, p, p, 3))
+        x = torch.einsum('nhwpqc->nchpwq', x)
+        imgs = x.reshape(shape=(x.shape[0], 3, h * p, w * p))
+        return imgs
+    
     def compute_mae_reconstruction_error(
         self,
-        image: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Compute MAE reconstruction error.
+        image: Union[torch.Tensor, List[torch.Tensor]],
+        return_patch_errors: bool = True,
+        reduction: str = 'mean',
+        metric: str = 'l1'  # 'l1', 'l2', or 'ssim'
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """Compute MAE reconstruction error with multiple error metrics.
         
+        Args:
+            image: Input image tensor (C, H, W) or batch of images (N, C, H, W)
+            return_patch_errors: Whether to return per-patch errors
+            reduction: How to reduce the error across patches: 'mean', 'sum', or 'none'
+            metric: Error metric to use: 'l1', 'l2', or 'ssim'
+            
         Returns:
-            Tuple of (reconstruction_error, patch_errors)
+            If return_patch_errors is False, returns a scalar or batch of scalars
+            If return_patch_errors is True, returns a tuple of (error, patch_errors)
         """
+        from torchmetrics.functional import structural_similarity_index_measure as ssim
+        
+        if isinstance(image, list):
+            image = torch.stack(image)
+            
+        if image.dim() == 3:
+            image = image.unsqueeze(0)
+            
+        assert image.dim() == 4, "Input must be a 4D tensor (N, C, H, W)"
+        assert reduction in ['mean', 'sum', 'none'], "reduction must be 'mean', 'sum', or 'none'"
+        assert metric in ['l1', 'l2', 'ssim'], "metric must be 'l1', 'l2', or 'ssim'"
+        
         with torch.no_grad():
-            # Forward pass through MAE
+            # Store original image for later comparison
+            original_image = image.to(self.device)
+            
+            # Forward pass through MAE with masking
             outputs = self.model(
-                pixel_values=image,
+                pixel_values=original_image,
                 output_hidden_states=True,
                 return_dict=True
             )
@@ -77,25 +140,85 @@ class ImageEntropyEstimator:
             # Get the reconstructed pixel values
             last_hidden = outputs.last_hidden_state
             
-            # Project back to pixel space
-            # This is a simplified version - actual implementation depends on MAE architecture
-            # You may need to adjust this based on the specific MAE variant
-            patch_embeddings = last_hidden[:, 1:, :]  # Remove [CLS] token
-            batch_size, num_patches, _ = patch_embeddings.shape
-            patch_size = self.model.config.patch_size
+            # Get the decoder output and normalize if needed
+            reconstructed = self.model.vit.layernorm(self.model.decoder(last_hidden))
             
-            # Reshape to image patches
-            h = w = int(np.sqrt(num_patches))
-            patch_embeddings = patch_embeddings.reshape(batch_size, h, w, -1)
+            # Predict pixels with decoder
+            pred = self.model.decoder.decoder_pred(reconstructed)
             
-            # Compute reconstruction error per patch
-            # This is a placeholder - actual implementation would compare with original patches
-            patch_errors = torch.mean(torch.square(patch_embeddings), dim=-1)
+            # Remove [CLS] token and reshape to patches
+            pred = pred[:, 1:, :]
             
-            # Compute overall reconstruction error
-            reconstruction_error = torch.mean(patch_errors)
+            # Reconstruct the image from patches
+            reconstructed_patches = pred
+            reconstructed_image = self._unpatchify(reconstructed_patches)
             
-            return reconstruction_error, patch_errors
+            # Calculate error based on the specified metric
+            if metric == 'l1':
+                patch_errors = F.l1_loss(
+                    self._patchify(original_image),
+                    reconstructed_patches,
+                    reduction='none'
+                ).mean(dim=-1)  # Mean over channels and pixels in patch
+                
+            elif metric == 'l2':
+                patch_errors = F.mse_loss(
+                    self._patchify(original_image),
+                    reconstructed_patches,
+                    reduction='none'
+                ).mean(dim=-1)  # Mean over channels and pixels in patch
+                
+            elif metric == 'ssim':
+                # SSIM is computed on the full image, not per-patch
+                # We'll compute it per-patch by extracting patches
+                ssim_errors = []
+                p = self.model.config.patch_size
+                
+                # Process each image in the batch
+                for i in range(original_image.shape[0]):
+                    # Extract patches
+                    patches_original = F.unfold(
+                        original_image[i:i+1], 
+                        kernel_size=p, 
+                        stride=p
+                    ).transpose(1, 2)
+                    
+                    patches_recon = F.unfold(
+                        reconstructed_image[i:i+1], 
+                        kernel_size=p, 
+                        stride=p
+                    ).transpose(1, 2)
+                    
+                    # Reshape to (num_patches, 3, p, p)
+                    patches_original = patches_original.reshape(-1, 3, p, p)
+                    patches_recon = patches_recon.reshape(-1, 3, p, p)
+                    
+                    # Compute SSIM for each patch
+                    ssim_scores = ssim(
+                        patches_original, 
+                        patches_recon,
+                        data_range=1.0,
+                        reduction='none'
+                    )
+                    ssim_errors.append(1.0 - ssim_scores)  # Convert to error (lower is worse)
+                
+                patch_errors = torch.stack(ssim_errors).view(original_image.shape[0], -1)
+            
+            # Apply reduction
+            if reduction == 'mean':
+                error = patch_errors.mean(dim=1)
+            elif reduction == 'sum':
+                error = patch_errors.sum(dim=1)
+            else:  # 'none'
+                error = patch_errors
+            
+            # Squeeze if single image
+            if error.shape[0] == 1 and not return_patch_errors:
+                error = error.squeeze(0)
+            
+            if return_patch_errors:
+                return error, patch_errors
+            return error
     
     def compute_entropy(
         self,
